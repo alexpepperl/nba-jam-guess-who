@@ -325,6 +325,13 @@
   .foot{text-align:center;font-size:7px;color:#6a5a99;line-height:2;margin-top:18px;}
   .foot a{color:var(--blue);text-decoration:none;}
   @media (max-width:520px){
+    body{
+      align-items:flex-start;
+      padding:10px;
+    }
+    .cabinet{
+      padding:16px 12px 22px;
+    }
     .options{grid-template-columns:1fr;}
     .jumbo{width:200px;height:200px;}
   }
@@ -374,7 +381,7 @@
     </div>
 
     <div class="jumbo" id="jumbo">
-      <img id="playerImg" alt="Mystery NBA player" />
+      <img id="playerImg" alt="Mystery NBA player" referrerpolicy="no-referrer" />
     </div>
 
     <div class="question">WHO IS THIS BALLER?</div>
@@ -882,6 +889,11 @@ const DIFFICULTIES = {
   diehard: {label:"DIEHARD", tiers:[4], sub:"Deep cuts & journeymen"},
 };
 const ERA_LABEL = {"1980s":"80's","1990s":"90's","2000s":"00's","2010s":"2010's","Current":"Current"};
+const UNAVAILABLE_PHOTOS = new Set([
+  "weathcl01", "newmajo01", "jonesca01", "wingada01", "pincked01",
+  "perryel01", "vaughja01", "thompla01", "sealyma01", "okoremi01",
+  "sandemi01", "ellispe01", "jonespo01", "perduwi01"
+]);
 
 // Fallback silhouette (data URI SVG) when no photo can be loaded
 const FALLBACK = "data:image/svg+xml;utf8," + encodeURIComponent(
@@ -913,17 +925,60 @@ const shuffle = a => { for(let i=a.length-1;i>0;i--){const j=Math.random()*(i+1)
 
 // ---- Tiny WebAudio arcade blips (no external files) ----
 let actx = null;
+let audioWarningShown = false;
+const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+
+function getAudioContext(){
+  if(!AudioContextClass){
+    if(!audioWarningShown){
+      console.warn("Web Audio is not supported by this browser.");
+      audioWarningShown = true;
+    }
+    return null;
+  }
+  if(!actx){
+    try{
+      actx = new AudioContextClass();
+    }catch(error){
+      console.warn("Unable to initialize game audio.", error);
+      audioWarningShown = true;
+      return null;
+    }
+  }
+  return actx;
+}
+
+function unlockAudio(){
+  const ctx = getAudioContext();
+  if(!ctx) return;
+  if(ctx.state === "suspended"){
+    ctx.resume().catch(error => console.warn("Unable to resume game audio.", error));
+  }
+  const source = ctx.createBufferSource();
+  source.buffer = ctx.createBuffer(1, 1, ctx.sampleRate);
+  source.connect(ctx.destination);
+  source.start();
+}
+
 function beep(freq, dur, type="square", vol=0.08){
-  try{
-    actx = actx || new (window.AudioContext||window.webkitAudioContext)();
-    const o = actx.createOscillator(), g = actx.createGain();
+  const ctx = getAudioContext();
+  if(!ctx) return;
+  const play = () => {
+    const o = ctx.createOscillator(), g = ctx.createGain();
     o.type = type; o.frequency.value = freq;
     g.gain.value = vol;
-    o.connect(g); g.connect(actx.destination);
+    o.connect(g); g.connect(ctx.destination);
     o.start();
-    g.gain.exponentialRampToValueAtTime(0.0001, actx.currentTime + dur);
-    o.stop(actx.currentTime + dur);
-  }catch(e){/* audio not available — ignore */}
+    g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + dur);
+    o.stop(ctx.currentTime + dur);
+  };
+  if(ctx.state === "suspended"){
+    ctx.resume()
+      .then(play)
+      .catch(error => console.warn("Unable to play game audio.", error));
+  }else{
+    play();
+  }
 }
 const sndGood = ()=>{beep(660,0.08);setTimeout(()=>beep(990,0.12),90);};
 const sndBad  = ()=>{beep(160,0.25,"sawtooth");};
@@ -948,8 +1003,13 @@ function loadPhoto(player){
 
 // ---- Start a game for a chosen era + the selected difficulty ----
 function startGame(era){
+  unlockAudio();
   const diff = DIFFICULTIES[selectedDiff];
-  pool = PLAYERS.filter(p => p.eras.includes(era) && diff.tiers.includes(p.tier));
+  pool = PLAYERS.filter(p =>
+    p.eras.includes(era) &&
+    diff.tiers.includes(p.tier) &&
+    (p.nba || !UNAVAILABLE_PHOTOS.has(p.bbr))
+  );
   if(pool.length < 2){ return; } // safety — every era/difficulty is seeded with plenty
   queue = shuffle(pool.slice()).slice(0, Math.min(TOTAL_ROUNDS, pool.length));
   roundTotal = queue.length;
