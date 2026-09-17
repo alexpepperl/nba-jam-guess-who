@@ -923,10 +923,68 @@ const imgEl = $("playerImg"), optionsEl = $("options"), bannerEl = $("banner"), 
 // ---- Utils ----
 const shuffle = a => { for(let i=a.length-1;i>0;i--){const j=Math.random()*(i+1)|0;[a[i],a[j]]=[a[j],a[i]];} return a; };
 
-// ---- Tiny WebAudio arcade blips (no external files) ----
+// ---- Embedded arcade sounds with WebAudio fallback ----
 let actx = null;
 let audioWarningShown = false;
 const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+const audioPlayer = new Audio();
+audioPlayer.preload = "auto";
+audioPlayer.setAttribute("playsinline", "");
+
+function createToneClip(segments){
+  const sampleRate = 22050;
+  const sampleCount = segments.reduce((sum, segment) =>
+    sum + Math.floor(segment.duration * sampleRate), 0);
+  const bytes = new Uint8Array(44 + sampleCount);
+  const view = new DataView(bytes.buffer);
+  const writeText = (offset, text) => {
+    for(let i = 0; i < text.length; i++) view.setUint8(offset + i, text.charCodeAt(i));
+  };
+  writeText(0, "RIFF");
+  view.setUint32(4, 36 + sampleCount, true);
+  writeText(8, "WAVE");
+  writeText(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate, true);
+  view.setUint16(32, 1, true);
+  view.setUint16(34, 8, true);
+  writeText(36, "data");
+  view.setUint32(40, sampleCount, true);
+
+  let offset = 44;
+  segments.forEach(segment => {
+    const length = Math.floor(segment.duration * sampleRate);
+    for(let i = 0; i < length; i++){
+      const phase = (i * segment.frequency / sampleRate) % 1;
+      const wave = segment.type === "sawtooth"
+        ? (phase * 2) - 1
+        : (phase < 0.5 ? 1 : -1);
+      const fade = Math.min(1, i / 100, (length - i) / 220);
+      view.setUint8(offset++, 128 + Math.round(wave * 92 * fade));
+    }
+  });
+  return URL.createObjectURL(new Blob([bytes], {type:"audio/wav"}));
+}
+
+const SOUND_CLIPS = {
+  start: createToneClip([
+    {frequency:440, duration:0.07, type:"square"},
+    {frequency:660, duration:0.10, type:"square"}
+  ]),
+  good: createToneClip([
+    {frequency:660, duration:0.09, type:"square"},
+    {frequency:990, duration:0.14, type:"square"}
+  ]),
+  bad: createToneClip([
+    {frequency:160, duration:0.28, type:"sawtooth"}
+  ]),
+  buzz: createToneClip([
+    {frequency:110, duration:0.65, type:"sawtooth"}
+  ])
+};
 
 function getAudioContext(){
   if(!AudioContextClass){
@@ -948,7 +1006,7 @@ function getAudioContext(){
   return actx;
 }
 
-function unlockAudio(){
+function unlockWebAudio(){
   const ctx = getAudioContext();
   if(!ctx) return;
   if(ctx.state === "suspended"){
@@ -980,9 +1038,30 @@ function beep(freq, dur, type="square", vol=0.08){
     play();
   }
 }
-const sndGood = ()=>{beep(660,0.08);setTimeout(()=>beep(990,0.12),90);};
-const sndBad  = ()=>{beep(160,0.25,"sawtooth");};
-const sndBuzz = ()=>{beep(110,0.6,"sawtooth",0.12);};
+
+function playClip(clip, fallback){
+  audioPlayer.src = clip;
+  audioPlayer.currentTime = 0;
+  audioPlayer.volume = 1;
+  const playback = audioPlayer.play();
+  if(playback){
+    playback.catch(error => {
+      console.warn("HTML audio playback failed; using Web Audio.", error);
+      fallback();
+    });
+  }
+}
+
+const sndStart = ()=> playClip(SOUND_CLIPS.start, ()=>{
+  beep(440,0.07);
+  setTimeout(()=>beep(660,0.10),75);
+});
+const sndGood = ()=> playClip(SOUND_CLIPS.good, ()=>{
+  beep(660,0.08);
+  setTimeout(()=>beep(990,0.12),90);
+});
+const sndBad  = ()=> playClip(SOUND_CLIPS.bad, ()=>beep(160,0.25,"sawtooth"));
+const sndBuzz = ()=> playClip(SOUND_CLIPS.buzz, ()=>beep(110,0.6,"sawtooth",0.12));
 
 // ---- Screen control ----
 function show(el){ [startScreen,gameScreen,endScreen].forEach(s=>s.classList.add("hidden")); el.classList.remove("hidden"); }
@@ -1003,7 +1082,8 @@ function loadPhoto(player){
 
 // ---- Start a game for a chosen era + the selected difficulty ----
 function startGame(era){
-  unlockAudio();
+  unlockWebAudio();
+  sndStart();
   const diff = DIFFICULTIES[selectedDiff];
   pool = PLAYERS.filter(p =>
     p.eras.includes(era) &&
