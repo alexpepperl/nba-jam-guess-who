@@ -14,9 +14,10 @@ before the shot clock expires and see how high you can score.
 
 ## Features
 
-- Hundreds of NBA players across five eras
+- More than 3,600 unique NBA players across five eras
 - Four difficulty levels for casual fans through basketball experts
-- Randomized 10-round games
+- No-repeat rotation that cycles through each mode's roster before reshuffling
+- Automatic photo verification that skips players without a usable headshot
 - Arcade-inspired presentation and responsive layout
 - No account, installation or build step required
 
